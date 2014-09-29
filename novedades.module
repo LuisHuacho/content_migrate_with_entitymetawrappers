@@ -1,0 +1,171 @@
+<?php
+
+/**
+  * Implements hook_menu().
+  */
+function novedades_menu() {
+  $items = array();
+
+  $items['admin/migracion/novedades'] = array(
+    'title' => 'Migración de Novedades',
+    'description' => 'Run batch operations.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('novedades_lr_form'),
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+   );
+  return $items;
+}
+
+function novedades_lr_form(){
+  $form = array();
+  $form['submit'] = array('#type' => 'submit', '#value' => t('Click here to Start'));
+  return $form;
+}
+
+function novedades_lr_form_submit($form, $form_state){
+    batch_set(novedades_lr_build_batch());
+}
+
+function novedades_lr_build_batch(){
+    db_set_active('sinia');
+    $query = "SELECT idevento FROM evento WHERE idtipoevento = 4";
+    
+    $results = db_query($query);
+    db_set_active('default'); 
+    
+    
+  // Here we can add multiple operation using an array variable.
+  // $operations[] = array('migracion_process_data', array($progress, $limit)); // operation with argument
+   //$operations[] = array('migracion_process_data_2'); // operation without argument
+
+  //Define your batch operation here
+  $batch = array(
+    'title' => t('Batch operation process'),
+    //'operations' => $operations,
+    'finished' => 'migracion_lr_build_batch_finished',
+    'init_message' => t('Initializing...'),
+    'progress_message' => t('Opertation @current out of @total.'),
+    'error_message' => t('Found some error here.'),
+  );
+
+  $progress = 0; // where to start
+  $limit = 5; // how many to process for each run
+  $max = $results->rowCount(); // how many records to process until stop - can do query here to get max times to run
+  while ($progress <= $max) {
+    $batch['operations'][] = array('novedades_process_data', array($progress, $limit));
+    $progress = $progress + $limit;
+  }
+  
+  
+  return $batch;
+}
+
+
+function novedades_lr_build_batch_finished($success, $results, $operations) {
+  if ($success) {
+    // Here we could do something meaningful with the results.
+    // We just display the number of data we processed...
+    drupal_set_message(t('@count document  processed.', array('@count' => count($results))));
+  } else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    drupal_set_message(t('An error occurred while processing @operation with arguments : @args', array('@operation' => $error_operation[0], '@args' => print_r($error_operation[0], TRUE))));
+  }
+}
+
+
+
+
+function novedades_process_data($progress, $limit, &$context){ 
+    db_set_active('sinia');
+    $query = "
+      SELECT 
+        e.nombre as title, e.descripcion as body, e.fechapub as created,
+        array_to_string(array_agg(doc.idtipodocadjunto),',')  tipo,
+        array_to_string(array_agg(doc.url),',')  archivos,
+        info.nombre as fuenteinformacion
+        FROM evento e 
+        LEFT JOIN evento_has_docadjunto ehd ON ehd.idevento = e.idevento
+        LEFT JOIN  docadjunto doc ON doc.iddocadjunto = ehd.iddocadjunto
+        LEFT JOIN evento_fuenteinfo einfo ON einfo.idevento = e.idevento
+        LEFT JOIN fuenteinformacion info ON info.idfuenteinformacion = einfo.idfuenteinformacion
+        WHERE e.idtipoevento=4 
+        GROUP BY e.nombre, e.descripcion, e.fechapub, info.nombre
+      ";
+    
+    $results = db_query_range($query, $progress, $limit);
+    db_set_active('default');
+    
+    foreach ($results as $row) {
+        $e = entity_create('node', array('type' => 'blog'));
+        $e->uid = 1; // Specify the author
+        // Create a Entity Wrapper of that new Entity
+        $entity = entity_metadata_wrapper('node',$e);
+        $entity->title = drupal_substr($row->title, 0, 252);  //título     
+      
+        $entity->body = array(  //body
+                        'value' => $row->body,
+                        'format' => 'full_html',
+                ); 
+        
+        $tipos = explode(',', $row->tipo);
+        $archivos = explode(',', $row->archivos);
+        $adjuntos = array_combine($archivos, $tipos);
+        $i = 0;
+        
+        foreach($adjuntos as $valor => $idtipo) {
+          switch ($idtipo) {
+            case '1':
+              $uri = 'public://archivos/' . $valor;
+              
+              $file = new stdClass();
+              $file->fid = NULL;
+              $file->uri = $uri;
+              $file->uid = 1;
+              $file->filename = drupal_basename($uri);
+              $file->filemime = file_get_mimetype($uri);
+              $file = file_save($file);
+              
+              $entity->field_image->file = $file;
+              break;
+            case '2':
+              $uri = $valor;
+              $entity->field_url->set($uri);
+              break;
+            case '3':
+              $uri = 'public://archivos/' . $valor;
+              
+              $file = new stdClass();
+              $file->fid = NULL;
+              $file->uri = $uri;
+              $file->uid = 1;
+              $file->filename = drupal_basename($uri);
+              $file->filemime = file_get_mimetype($uri);
+              $file = file_save($file);
+              
+              $entity->field_file_archivo[$i]->file->set($file);
+              $i++;
+              
+              break;
+          }
+        }
+        /*
+        if($row->fuenteinformacion) {
+          $entity->field_fuente_de_informacion->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->fuenteinformacion,6 , 'fuente_de_informacion')));
+        }*/
+    
+                
+        if($row->created) {
+          $entity->created->set(strtotime($row->created));
+        }
+        
+        $entity->save();         
+    }
+    
+    // update progress for message
+    $progress = $progress + $limit; 
+    // update message during each run so you know where you are in the process
+    $context['message'] = 'Now processing ' . $progress . ' - ' . $context['results'][0] . ' imported';  
+}

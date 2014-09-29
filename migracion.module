@@ -1,0 +1,262 @@
+<?php
+
+/**
+  * Implements hook_menu().
+  */
+function migracion_menu() {
+  $items = array();
+
+  $items['admin/migracion/documentos'] = array(
+    'title' => 'Migración de Documentos',
+    'description' => 'Run batch operations.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('migracion_lr_form'),
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+   );
+
+  return $items;
+}
+
+function migracion_lr_form(){
+  $form = array();
+  $form['submit'] = array('#type' => 'submit', '#value' => t('Click here to Start'));
+  return $form;
+}
+ 
+function migracion_lr_form_submit($form, $form_state){
+    batch_set(migracion_lr_build_batch());
+}
+
+
+function migracion_lr_build_batch(){
+    db_set_active('sinia');
+    $query = "
+        SELECT 
+        ehte.idelemento,  
+        ehte.idtipoelemento, 
+        te.nombre as tipo_documento, 
+        e.nombre as title, e.descripcion as body,  e.fecha as published, e.contacto, e.email, e.proposito,
+        doc2.edicionanio, doc2.edicionlugar, doc2.edicionpais, doc2.ideditorial, doc2.isbn, doc2.paginas,
+        repo.nombre as repterritorial, 
+        array_to_string(array_agg(doc.url),',') as urls, 
+        xtemas.temas FROM elemento_has_tipoelemento ehte
+        INNER JOIN tipoelemento te ON ehte.idtipoelemento = te.idtipoelemento
+        INNER JOIN elemento e ON e.idelemento = ehte.idelemento
+        INNER JOIN repterritorial repo ON repo.idrepterritorial = e.idrepterritorial
+        INNER JOIN elemento_has_docadjunto a ON a.idelemento = e.idelemento
+        INNER JOIN documento doc2 ON doc2.idelemento = ehte.idelemento
+        INNER JOIN docadjunto doc ON doc.iddocadjunto = a.iddocadjunto
+        INNER JOIN (SELECT ehm.idelemento, array_to_string(array_agg(m.nombre),',') as temas from elemento_has_marco ehm
+            INNER JOIN marcoordenador m ON ehm.idmarcoordenador = m.idmarcoordenador
+            GROUP BY ehm.idelemento) xtemas ON xtemas.idelemento = ehte.idelemento
+        WHERE te.idpadre=2 AND doc.idtipodocadjunto=3
+        GROUP BY ehte.idelemento, ehte.idtipoelemento, ehte.idtipoelemento, te.nombre, e.nombre, e.descripcion, 
+                e.fecha, e.contacto, e.email, e.proposito, repo.nombre, xtemas.temas,
+                doc2.edicionanio, doc2.edicionlugar, doc2.edicionpais, doc2.ideditorial, 
+                doc2.idelemento, doc2.isbn, doc2.paginas
+        ORDER BY ehte.idelemento";
+    
+    $results = db_query($query);
+    db_set_active('default'); 
+    
+    
+  // Here we can add multiple operation using an array variable.
+  // $operations[] = array('migracion_process_data', array($progress, $limit)); // operation with argument
+   //$operations[] = array('migracion_process_data_2'); // operation without argument
+
+  //Define your batch operation here
+  $batch = array(
+    'title' => t('Batch operation process'),
+    //'operations' => $operations,
+    'finished' => 'migracion_lr_build_batch_finished',
+    'init_message' => t('Initializing...'),
+    'progress_message' => t('Opertation @current out of @total.'),
+    'error_message' => t('Found some error here.'),
+  );
+
+  $progress = 0; // where to start
+  $limit = 5; // how many to process for each run
+  $max = $results->rowCount(); // how many records to process until stop - can do query here to get max times to run
+  while ($progress <= $max) {
+    $batch['operations'][] = array('documentos_process_data', array($progress, $limit));
+    $progress = $progress + $limit;
+  }
+  
+  
+  return $batch;
+}
+
+
+
+
+
+function migracion_lr_build_batch_finished($success, $results, $operations) {
+  if ($success) {
+    // Here we could do something meaningful with the results.
+    // We just display the number of data we processed...
+    drupal_set_message(t('@count document  processed.', array('@count' => count($results))));
+  } else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    drupal_set_message(t('An error occurred while processing @operation with arguments : @args', array('@operation' => $error_operation[0], '@args' => print_r($error_operation[0], TRUE))));
+  }
+}
+
+
+
+function documentos_process_data($progress, $limit, &$context){ 
+    db_set_active('sinia');
+    $query = "
+        SELECT 
+        ehte.idelemento,  
+        ehte.idtipoelemento, 
+        te.nombre as tipo_documento, 
+        e.nombre as title, e.descripcion as body,  e.fecha as published, e.contacto, e.email, e.proposito,
+        doc2.edicionanio, doc2.edicionlugar, doc2.edicionpais, doc2.ideditorial, doc2.isbn, doc2.paginas,
+        repo.nombre as repterritorial, 
+        array_to_string(array_agg(doc.url),',') as urls, 
+        xtemas.temas FROM elemento_has_tipoelemento ehte
+        INNER JOIN tipoelemento te ON ehte.idtipoelemento = te.idtipoelemento
+        INNER JOIN elemento e ON e.idelemento = ehte.idelemento
+        INNER JOIN repterritorial repo ON repo.idrepterritorial = e.idrepterritorial
+        INNER JOIN elemento_has_docadjunto a ON a.idelemento = e.idelemento
+        INNER JOIN documento doc2 ON doc2.idelemento = ehte.idelemento
+        INNER JOIN docadjunto doc ON doc.iddocadjunto = a.iddocadjunto
+        INNER JOIN (SELECT ehm.idelemento, array_to_string(array_agg(m.nombre),',') as temas from elemento_has_marco ehm
+            INNER JOIN marcoordenador m ON ehm.idmarcoordenador = m.idmarcoordenador
+            GROUP BY ehm.idelemento) xtemas ON xtemas.idelemento = ehte.idelemento
+        WHERE te.idpadre=2 AND doc.idtipodocadjunto=3
+        GROUP BY ehte.idelemento, ehte.idtipoelemento, ehte.idtipoelemento, te.nombre, e.nombre, e.descripcion, 
+                e.fecha, e.contacto, e.email, e.proposito, repo.nombre, xtemas.temas,
+                doc2.edicionanio, doc2.edicionlugar, doc2.edicionpais, doc2.ideditorial, 
+                doc2.idelemento, doc2.isbn, doc2.paginas
+        ORDER BY ehte.idelemento";
+    
+    $results = db_query_range($query, $progress, $limit);
+    db_set_active('default');
+    
+    foreach ($results as $row) {
+        $e = entity_create('node', array('type' => 'documentos'));
+        $e->uid = 1; // Specify the author
+        // Create a Entity Wrapper of that new Entity
+        $entity = entity_metadata_wrapper('node',$e);
+        $entity->title = drupal_substr($row->title, 0, 252);       
+      
+        $urls = explode(',', $row->urls);
+        
+        $i = 0;
+        
+        foreach ($urls as $url) {
+            $uri = 'public://archivos/'. $url;
+            
+            $control = search_uri($uri);
+            
+            if($control == 0) {
+              $file = new stdClass();
+              $file->fid = NULL;
+              $file->uri = $uri;
+              $file->uid = 1;
+              $file->filename = drupal_basename($uri);
+              $file->filemime = file_get_mimetype($uri);
+              $file = file_save($file);
+
+              $entity->field_file_archivo[$i]->file->set($file);
+
+              $i++;
+            }
+        }
+
+        $temas = explode(',', $row->temas); //Temática
+        $numTemas = count($temas);
+                       
+
+        $entity->body = array(
+                        'value' => $row->body,
+                        'format' => 'full_html',
+                );
+        
+        $entity->field_tipo_de_documento->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->tipo_documento, 4, 'tipo_de_documento')));
+        
+        if($temas){
+            foreach($temas as $tema) {
+                $tematicas[] = taxonomy_term_load(recover_tid_for_taxonomy_name($tema, 7, 'tematica'));
+            }        
+            $entity->field_descriptores_tematicos->set($tematicas);
+        }
+        
+        if($row->email){
+            $entity->field_correo_electronico->set($row->email);
+        }
+        
+        if($row->published){
+            $entity->field_fecha_creacion->set(strtotime($row->published));
+        }
+        
+        if($row->contacto){
+            $entity->field_contacto->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->contacto, 9, 'personas')));
+        }
+        
+        if($row->edicionlugar){
+          $entity->field_lugar_de_edicion->set($row->edicionlugar);
+        }
+        
+        if($row->paginas){
+          $entity->field_nro_de_paginas->set($row->paginas);
+        }
+        
+        if($row->isbn){
+          $entity->field_isbn->set($row->isbn);
+        }
+        
+        if($row->edicionpais){
+          db_set_active('sinia');
+          $id = $row->edicionpais;
+          $sql = "SELECT nombre FROM repterritorial WHERE idrepterritorial = $id";
+          $nombre = db_query($sql)->fetchField();
+          db_set_active('default');
+          $entity->field_pais_de_edicion->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->repterritorial, 8, 'representacion_territorial')));
+        }
+        
+        if($row->repterritorial){
+            $entity->field_contacto->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->repterritorial, 8, 'representacion_territorial')));
+        }
+        
+        $entity->save();      
+    }
+    
+    // update progress for message
+    $progress = $progress + $limit; 
+    // update message during each run so you know where you are in the process
+    $context['message'] = 'Now processing ' . $progress . ' - ' . $context['results'][0] . ' imported';  
+}
+
+function recover_tid_for_taxonomy_name($name, $vid, $vocabulary) {
+    $term = current(taxonomy_get_term_by_name($name, $vocabulary));
+    if($term != FALSE){
+      $output = $term->tid;
+    }else{
+      $data = array(
+            'name' => $name,
+            'vid' => $vid,
+        );
+      $e = entity_create('taxonomy_term', $data);
+      $wrapper = entity_metadata_wrapper('taxonomy_term', $e );
+      $wrapper->save();
+      
+      $output = $wrapper->tid->value();
+    }
+
+    return $output;
+  }
+
+
+  function search_uri($uri) {
+    if($uri){
+      $sql = "SELECT * FROM {file_managed} WHERE uri = :uri";
+      $results = db_query($sql, array(':uri' => $uri))->rowCount();
+    }
+    
+    return $results;
+  }

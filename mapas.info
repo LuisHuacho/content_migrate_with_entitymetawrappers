@@ -1,0 +1,4 @@
+name = Migración de MAPAS - CONTENIDO SINIA
+description = Migración de Contenidos MAPAS
+core = 7.x
+package = MIGRACION

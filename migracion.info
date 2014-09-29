@@ -1,0 +1,4 @@
+name = Migración de CONTENIDO SINIA
+description = Migración de Contenidos
+core = 7.x
+package = MIGRACION

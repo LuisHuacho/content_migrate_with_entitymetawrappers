@@ -1,0 +1,212 @@
+<?php
+
+/**
+  * Implements hook_menu().
+  */
+function mapas_menu() {
+  $items = array();
+
+  $items['admin/migracion/mapas'] = array(
+    'title' => 'Migración de Mapas',
+    'description' => 'Run batch operations.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('mapas_lr_form'),
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+   );
+  return $items;
+}
+
+
+function mapas_lr_form(){
+  $form = array();
+  $form['submit'] = array('#type' => 'submit', '#value' => t('Click here to Start'));
+  return $form;
+}
+
+function mapas_lr_form_submit($form, $form_state){
+    batch_set(mapas_lr_build_batch());
+}
+
+function mapas_lr_build_batch(){
+    db_set_active('sinia');
+    $query = "
+      SELECT 
+      e.idelemento as id, e.idrepterritorial as idrepterritorial, e.nombre as title, e.descripcion as body, e.fecha as fecha, e.contacto, e.email,
+      mp.proyecto, mp.metodologia, mp.escala, mp.datum, mp.proyeccion, mp.zona, mp.hemisferio, mp.clase,
+      ehd.iddocadjunto,
+      doc.nombre as archivo_nombre, doc.url as url,  rp.nombre as territorial,  
+      array_to_string(array_agg( marco.nombre ),',') as marcoordenador
+       FROM elemento e
+      INNER JOIN mapa mp ON  mp.idelemento = e.idelemento
+      INNER JOIN elemento_has_docadjunto ehd ON ehd.idelemento = e.idelemento
+      INNER JOIN docadjunto doc ON doc.iddocadjunto = ehd.iddocadjunto
+      INNER JOIN repterritorial rp ON rp.idrepterritorial = e.idrepterritorial
+      INNER JOIN elemento_has_marco ehm ON ehm.idelemento = e.idelemento
+      INNER JOIN marcoordenador marco ON marco.idmarcoordenador = ehm.idmarcoordenador
+      GROUP BY e.idelemento, mp.proyecto, mp.metodologia, mp.escala, mp.datum, mp.proyeccion, mp.zona, mp.hemisferio, mp.clase, ehd.iddocadjunto, doc.nombre, doc.url, rp.nombre";
+    $results = db_query($query);
+    db_set_active('default'); 
+    
+    
+  // Here we can add multiple operation using an array variable.
+  // $operations[] = array('migracion_process_data', array($progress, $limit)); // operation with argument
+   //$operations[] = array('migracion_process_data_2'); // operation without argument
+
+  //Define your batch operation here
+  $batch = array(
+    'title' => t('Batch operation process'),
+    //'operations' => $operations,
+    'finished' => 'mapas_lr_build_batch_finished',
+    'init_message' => t('Initializing...'),
+    'progress_message' => t('Opertation @current out of @total.'),
+    'error_message' => t('Found some error here.'),
+  );
+
+  $progress = 0; // where to start
+  $limit = 5; // how many to process for each run
+  $max = $results->rowCount(); // how many records to process until stop - can do query here to get max times to run
+  while ($progress <= $max) {
+    $batch['operations'][] = array('mapas_process_data', array($progress, $limit));
+    $progress = $progress + $limit;
+  }
+  
+  
+  return $batch;
+}
+
+
+
+
+function mapas_lr_build_batch_finished($success, $results, $operations) {
+  if ($success) {
+    // Here we could do something meaningful with the results.
+    // We just display the number of data we processed...
+    drupal_set_message(t('@count document  processed.', array('@count' => count($results))));
+  } else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    drupal_set_message(t('An error occurred while processing @operation with arguments : @args', array('@operation' => $error_operation[0], '@args' => print_r($error_operation[0], TRUE))));
+  }
+}
+
+
+
+
+function mapas_process_data($progress, $limit, &$context){ 
+    db_set_active('sinia');
+    $query = "
+      SELECT 
+      e.idelemento as id, e.idrepterritorial as idrepterritorial, e.nombre as title, e.descripcion as body, e.fecha as fecha, e.contacto, e.email,
+      mp.proyecto, mp.metodologia, mp.escala, mp.datum, mp.proyeccion, mp.zona, mp.hemisferio, mp.clase,
+      ehd.iddocadjunto,
+      doc.nombre as archivo_nombre, doc.url as url,  rp.nombre as territorial,  
+      array_to_string(array_agg( marco.nombre ),',') as marcoordenador,
+      fi.nombre as finformacion, fi.sigla as fsigla
+       FROM elemento e
+      INNER JOIN mapa mp ON  mp.idelemento = e.idelemento
+      INNER JOIN elemento_has_docadjunto ehd ON ehd.idelemento = e.idelemento
+      INNER JOIN docadjunto doc ON doc.iddocadjunto = ehd.iddocadjunto
+      INNER JOIN repterritorial rp ON rp.idrepterritorial = e.idrepterritorial
+      INNER JOIN elemento_has_marco ehm ON ehm.idelemento = e.idelemento
+      INNER JOIN marcoordenador marco ON marco.idmarcoordenador = ehm.idmarcoordenador
+      INNER JOIN elemento_has_fuenteinfo ehf ON ehf.idelemento = e.idelemento
+      INNER JOIN fuenteinformacion fi ON fi.idfuenteinformacion = ehf.idfuenteinformacion
+      GROUP BY e.idelemento, mp.proyecto, mp.metodologia, mp.escala, mp.datum, mp.proyeccion, mp.zona, mp.hemisferio, mp.clase, ehd.iddocadjunto, doc.nombre, doc.url, rp.nombre, fi.nombre, fi.sigla";
+    
+    $results = db_query_range($query, $progress, $limit);
+    db_set_active('default');
+    
+    foreach ($results as $row) {
+        $e = entity_create('node', array('type' => 'mapas'));
+        $e->uid = 1; // Specify the author
+        // Create a Entity Wrapper of that new Entity
+        $entity = entity_metadata_wrapper('node',$e);
+        $entity->title = drupal_substr($row->title, 0, 252);  //título     
+      
+        $entity->body = array(  //body
+                        'value' => $row->body,
+                        'format' => 'full_html',
+                ); 
+        
+        if($row->proyecto){ //proyecto
+          $entity->field_proyecto->set($row->proyecto);
+        };
+        
+        if($row->territorial){
+          $entity->field_representacion_territorial->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->territorial,8 , 'representacion_territorial')));
+        };
+        
+        if($row->informacion){
+          $entity->field_fuente_de_informacion->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->territorial,6 , 'fuente_de_informacion')));
+        }
+        
+        if($row->fecha){
+            $entity->field_fecha_creacion_mapa->set(strtotime($row->fecha));
+        }
+        
+        if($row->contacto){
+            $entity->field_contacto->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->contacto, 9, 'personas')));
+        }
+        
+        if($row->email){
+            $entity->field_correo_electronico->set($row->email);
+        }
+        
+        if($row->metodologia){
+          $entity->field_metologia_de_elaboracion->set($row->metodologia);
+        }
+        
+        if($row->escala){
+          $entity->field_escala->set($row->escala);
+        }
+        
+        if($row->datum){
+          $entity->field_escala_de_ingreso_de_datos->set($row->datum);
+        }
+        
+        if($row->proyeccion){
+          $entity->field_proyeccion->set($row->proyeccion);
+        }
+        
+        if($row->clase) {
+          $entity->field_tipo_de_mapa->set($row->clase);
+        }
+        
+        $temas = explode(',', $row->marcoordenador); //Temática
+        $numTemas = count($temas);
+                                   
+        if($temas){
+            foreach($temas as $tema) {
+                $tematicas[] = taxonomy_term_load(recover_tid_for_taxonomy_name($tema, 7, 'tematica'));
+            }        
+            $entity->field_descriptores_tematicos->set($tematicas);
+        }
+        
+        if($row->zona){
+          $entity->field_zona->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->contacto, 12, 'tipo_de_zona')));
+        };
+        
+        $url = $row->url;
+        $uri = 'public://archivos/'. $url;
+
+        $file = new stdClass();
+        $file->fid = NULL;
+        $file->uri = $uri;
+        $file->uid = 1;
+        $file->filename = drupal_basename($uri);
+        $file->filemime = file_get_mimetype($uri);
+        $file = file_save($file);
+
+        $entity->field_file_archivo[0]->file->set($file);
+        $entity->field_mapa_imagen = array('fid' => $file->fid);
+              
+        $entity->save();      
+    }
+    
+    // update progress for message
+    $progress = $progress + $limit; 
+    // update message during each run so you know where you are in the process
+    $context['message'] = 'Now processing ' . $progress . ' - ' . $context['results'][0] . ' imported';  
+}
