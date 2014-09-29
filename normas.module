@@ -209,7 +209,7 @@ function normas_process_data($progress, $limit, &$context){
         }
         
         if($row->fuenteinformacion) {
-          $entity->field_fuente_de_informacion->set(taxonomy_term_load(recover_tid_for_taxonomy_name($row->fuenteinformacion,6 , 'fuente_de_informacion')));
+          $entity->field_fuente_de_informacion = taxonomy_get_term_by_name($row->fuenteinformacion, 'fuente_de_informacion');
         }
         
         if($row->temas) {
